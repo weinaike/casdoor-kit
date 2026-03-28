@@ -1,0 +1,67 @@
+# casdoor-kit 配置文件模板
+# 本文件列出了 casdoor-kit 库运行所需的全部配置项
+# 按需复制到你的项目中，并根据实际情况修改
+
+# ============================================================
+# JWT 鉴权配置（RS256）
+# 生成 RSA 密钥对:
+#   openssl genrsa -out private.key 2048
+#   openssl rsa -in private.key -pubout -out public.key
+# ============================================================
+jwt:
+  public_key_path: "./configs/public.key"      # RSA 公钥 PEM 文件路径（验证 Token）
+  private_key_path: "./configs/private.key"    # RSA 私钥 PEM 文件路径（签发 Token）
+  issuer: "your-service-name"                  # JWT 签发者标识
+  access_token_ttl: 86400                      # Token 有效期（秒），86400 = 24小时
+
+# ============================================================
+# Casdoor OAuth2 配置
+# 需要在 Casdoor 中预先创建:
+#   1. Organization
+#   2. Application -> 获取 ClientID / ClientSecret
+#   3. Products -> 与下方 entitlement.product_mappings 的 key 对应
+#   4. Payment Provider（支付宝/微信/Stripe 等）
+# ============================================================
+casdoor:
+  endpoint: "https://your-casdoor-instance.com"  # Casdoor 服务地址
+  client_id: "your-client-id"                    # OAuth2 Client ID
+  client_secret: "your-client-secret"            # OAuth2 Client Secret
+  organization: "your-org"                       # Casdoor 组织名
+  application: "your-app"                        # Casdoor 应用名
+  redirect_uri: "http://localhost:5173/auth/callback"  # OAuth2 回调地址
+
+# ============================================================
+# 权益产品映射配置
+# key = Casdoor Product name（必须与 Casdoor 中的产品名完全一致）
+# entitlement_type: TOP_UP（加油包）/ SUBSCRIPTION（订阅）/ GIFT（赠送）
+# period_months: 0 = 永久有效, >0 = 有效期月数
+# ============================================================
+entitlement:
+  product_mappings:
+    # --- 加油包（永久有效） ---
+    basic-pack:
+      quota_seconds: 3600           # 1 小时
+      entitlement_type: "TOP_UP"
+      period_months: 0              # 永久有效
+      description: "1小时加油包"
+    standard-pack:
+      quota_seconds: 10800          # 3 小时
+      entitlement_type: "TOP_UP"
+      period_months: 0
+      description: "3小时加油包"
+    premium-pack:
+      quota_seconds: 36000          # 10 小时
+      entitlement_type: "TOP_UP"
+      period_months: 0
+      description: "10小时加油包"
+    # --- 订阅套餐（周期有效） ---
+    pro-monthly:
+      quota_seconds: 7200           # 2 小时/月
+      entitlement_type: "SUBSCRIPTION"
+      period_months: 1
+      description: "专业版月度订阅（2小时/月）"
+    pro-yearly:
+      quota_seconds: 86400          # 24 小时/年
+      entitlement_type: "SUBSCRIPTION"
+      period_months: 12
+      description: "专业版年度订阅（24小时/年）"
