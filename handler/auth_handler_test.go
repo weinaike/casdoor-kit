@@ -66,6 +66,14 @@ func setupAuthRouter(svc *mockAuthService) (*gin.Engine, *AuthHandler) {
 	return r, h
 }
 
+// withUserID is a test middleware that injects a user ID into the context.
+func withUserID(userID string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Set(string(middleware.UserIDKey), userID)
+		c.Next()
+	}
+}
+
 func TestGetLoginURL(t *testing.T) {
 	svc := &mockAuthService{
 		loginURL:  "https://casdoor.test/login",
@@ -194,14 +202,11 @@ func TestCallback_AuthFails(t *testing.T) {
 func TestGetCurrentUser_Authenticated(t *testing.T) {
 	svc := &mockAuthService{}
 	r, h := setupAuthRouter(svc)
-	r.GET("/auth/me", h.GetCurrentUser)
+	r.GET("/auth/me", withUserID("user-42"), h.GetCurrentUser)
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/auth/me", nil)
-	c, _ := gin.CreateTestContext(w)
-	c.Request = req
-	c.Set(string(middleware.UserIDKey), "user-42")
-	h.GetCurrentUser(c)
+	r.ServeHTTP(w, req)
 
 	if w.Code != 200 {
 		t.Fatalf("status = %d", w.Code)
@@ -215,9 +220,7 @@ func TestGetCurrentUser_NotAuthenticated(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/auth/me", nil)
-	c, _ := gin.CreateTestContext(w)
-	c.Request = req
-	h.GetCurrentUser(c)
+	r.ServeHTTP(w, req)
 
 	if w.Code != 401 {
 		t.Errorf("status = %d, want 401", w.Code)
@@ -230,14 +233,11 @@ func TestLogout_Success(t *testing.T) {
 		logoutURL: "https://casdoor.test/logout?token=casdoor-token",
 	}
 	r, h := setupAuthRouter(svc)
-	r.POST("/auth/logout", h.Logout)
+	r.POST("/auth/logout", withUserID("user-1"), h.Logout)
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/auth/logout", nil)
-	c, _ := gin.CreateTestContext(w)
-	c.Request = req
-	c.Set(string(middleware.UserIDKey), "user-1")
-	h.Logout(c)
+	r.ServeHTTP(w, req)
 
 	if w.Code != 200 {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
@@ -261,14 +261,11 @@ func TestLogout_AuthFails(t *testing.T) {
 		logoutErr: context.DeadlineExceeded,
 	}
 	r, h := setupAuthRouter(svc)
-	r.POST("/auth/logout", h.Logout)
+	r.POST("/auth/logout", withUserID("user-1"), h.Logout)
 
 	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
 	req := httptest.NewRequest("POST", "/auth/logout", nil)
-	c.Request = req
-	c.Set(string(middleware.UserIDKey), "user-1")
-	h.Logout(c)
+	r.ServeHTTP(w, req)
 
 	if w.Code != 500 {
 		t.Errorf("status = %d, want 500", w.Code)

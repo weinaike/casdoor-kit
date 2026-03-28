@@ -74,7 +74,7 @@ type OrderSyncResult struct {
 }
 
 type paymentService struct {
-	casdoorClient      *casdoor.Client
+	casdoorClient      casdoor.ClientInterface
 	authService        authz.AuthService
 	entitlementRepo    repo.BillingRepository
 	entitlementService EntitlementService
@@ -82,7 +82,7 @@ type paymentService struct {
 
 // NewPaymentService creates a payment service.
 func NewPaymentService(
-	casdoorClient *casdoor.Client,
+	casdoorClient casdoor.ClientInterface,
 	authService authz.AuthService,
 	entitlementRepo repo.BillingRepository,
 	entitlementService EntitlementService,
@@ -148,6 +148,9 @@ func (s *paymentService) GetProducts(ctx context.Context, userID string) ([]Prod
 }
 
 func (s *paymentService) CreateOrder(ctx context.Context, userID string, req *CreateOrderInput) (*PaymentResult, error) {
+	if req == nil {
+		return nil, errors.New("请求参数不能为空")
+	}
 	if req.ProductName == "" {
 		return nil, errors.New("产品名称不能为空")
 	}
@@ -375,10 +378,15 @@ func (s *paymentService) HandlePaymentCallback(ctx context.Context, orderName st
 		gokit.GetLogger().Error("更新本地订单状态失败", "error", err)
 	}
 
-	gokit.GetLogger().Info("支付回调处理成功",
+	logMsg := "支付回调处理成功"
+	logArgs := []interface{}{
 		"order_name", orderName,
 		"user_id", order.UserID,
-		"granted_seconds", entitlement.TotalSeconds)
+	}
+	if entitlement != nil {
+		logArgs = append(logArgs, "granted_seconds", entitlement.TotalSeconds)
+	}
+	gokit.GetLogger().Info(logMsg, logArgs...)
 
 	return nil
 }
@@ -450,13 +458,14 @@ func (s *paymentService) SyncOrder(ctx context.Context, userID string, orderName
 		gokit.GetLogger().Error("更新本地订单状态失败", "error", err)
 	}
 
-	result.QuotaSeconds = entitlement.TotalSeconds
+	if entitlement != nil {
+		result.QuotaSeconds = entitlement.TotalSeconds
+	}
 	result.Message = "支付成功，权益已发放"
 
 	gokit.GetLogger().Info("订单同步成功，权益已发放",
 		"order_name", orderName,
-		"user_id", userID,
-		"quota_seconds", entitlement.TotalSeconds)
+		"user_id", userID)
 
 	return result, nil
 }

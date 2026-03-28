@@ -56,6 +56,12 @@ type mockBillingRepo struct {
 	transactions    []model.BillingTransactionLog
 	transactionsTotal int64
 	transactionsErr error
+
+	// Order
+	orderByCasdoorName    *model.UserOrder
+	orderByCasdoorNameErr error
+	createOrderErr        error
+	updateOrderErr        error
 }
 
 // --- Implement all 26 methods of repo.BillingRepository ---
@@ -113,11 +119,11 @@ func (m *mockBillingRepo) ListBillingTransactionsByUserID(_ context.Context, _ s
 }
 
 func (m *mockBillingRepo) CreateOrder(_ context.Context, _ *model.UserOrder) error {
-	return nil
+	return m.createOrderErr
 }
 
 func (m *mockBillingRepo) GetOrderByCasdoorOrderName(_ context.Context, _ string) (*model.UserOrder, error) {
-	return nil, nil
+	return m.orderByCasdoorName, m.orderByCasdoorNameErr
 }
 
 func (m *mockBillingRepo) GetOrderByID(_ context.Context, _ int64) (*model.UserOrder, error) {
@@ -125,7 +131,7 @@ func (m *mockBillingRepo) GetOrderByID(_ context.Context, _ int64) (*model.UserO
 }
 
 func (m *mockBillingRepo) UpdateOrder(_ context.Context, _ *model.UserOrder) error {
-	return nil
+	return m.updateOrderErr
 }
 
 func (m *mockBillingRepo) ListOrdersByUserID(_ context.Context, _ string, _, _ int) ([]model.UserOrder, int64, error) {

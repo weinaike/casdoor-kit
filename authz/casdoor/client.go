@@ -14,11 +14,36 @@ import (
 	"github.com/weinaike/casdoor-kit/config"
 )
 
+// ClientInterface defines the methods a Casdoor client must implement.
+type ClientInterface interface {
+	GetOrganization() string
+	GetLoginURL(state string) string
+	GetSignupURL() string
+	GetLogoutURL(casdoorAccessToken string) string
+	ExchangeCode(ctx context.Context, code string) (*TokenResponse, error)
+	GetUserInfo(ctx context.Context, accessToken string) (*UserInfo, error)
+	RefreshToken(ctx context.Context, refreshToken string) (*TokenResponse, error)
+	GetSystemToken(ctx context.Context) (string, error)
+	LoginByPassword(ctx context.Context, username, password string) (*TokenResponse, error)
+	RevokeToken(ctx context.Context, accessToken string) error
+	GetProducts(ctx context.Context, accessToken string) ([]Product, error)
+	GetProduct(ctx context.Context, accessToken string, productName string) (*Product, error)
+	PlaceOrder(ctx context.Context, accessToken string, productName string) (*Order, error)
+	PayOrder(ctx context.Context, accessToken string, orderOwner string, orderName string, provider string) (*Payment, error)
+	GetUserOrders(ctx context.Context, accessToken string, userName string) ([]Order, error)
+	GetOrder(ctx context.Context, accessToken string, orderName string) (*Order, error)
+	CancelOrder(ctx context.Context, orderOwner string, orderName string) error
+	NotifyPayment(ctx context.Context, owner string, paymentName string) error
+}
+
 // Client is a Casdoor OAuth2 client.
 type Client struct {
 	cfg        *config.CasdoorConfig
 	httpClient *http.Client
 }
+
+// Compile-time check that Client implements ClientInterface.
+var _ ClientInterface = (*Client)(nil)
 
 // NewClient creates a Casdoor client.
 func NewClient(cfg *config.CasdoorConfig) *Client {
@@ -141,6 +166,10 @@ func (c *Client) GetUserInfo(ctx context.Context, accessToken string) (*UserInfo
 		return nil, fmt.Errorf("解析用户信息失败: %w", err)
 	}
 
+	if userInfo.ID == "" {
+		return nil, fmt.Errorf("获取用户信息失败: 返回空用户（token 无效或已过期）")
+	}
+
 	gokit.GetLogger().Info("获取用户信息成功",
 		"user_id", userInfo.ID,
 		"email", userInfo.Email)
@@ -221,6 +250,45 @@ func (c *Client) GetSystemToken(ctx context.Context) (string, error) {
 	}
 
 	return tokenResp.AccessToken, nil
+}
+
+// LoginByPassword obtains tokens via OAuth2 resource owner password credentials grant.
+func (c *Client) LoginByPassword(ctx context.Context, username, password string) (*TokenResponse, error) {
+	tokenURL := fmt.Sprintf("%s/api/login/oauth/access_token",
+		strings.TrimSuffix(c.cfg.Endpoint, "/"))
+
+	data := url.Values{}
+	data.Set("grant_type", "password")
+	data.Set("client_id", c.cfg.ClientID)
+	data.Set("client_secret", c.cfg.ClientSecret)
+	data.Set("username", username)
+	data.Set("password", password)
+	data.Set("scope", "openid profile email")
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL,
+		strings.NewReader(data.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("创建请求失败: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("密码登录失败: status %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	var tokenResp TokenResponse
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		return nil, fmt.Errorf("解析响应失败: %w", err)
+	}
+
+	return &tokenResp, nil
 }
 
 // RevokeToken revokes a Casdoor access token.

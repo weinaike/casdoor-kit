@@ -97,7 +97,7 @@ func setUserID(c *gin.Context, userID string) {
 func TestGetProducts(t *testing.T) {
 	ps := &mockPaymentService{
 		products: []billing.ProductWithEntitlement{
-			{Name: "basic-pack", DisplayName: "基础包"},
+			{Name: "basic-pack", DisplayName: "基础包", Price: 29.9, Currency: "CNY"},
 		},
 	}
 	h := setupPaymentHandler(ps, &mockEntitlementSvc{})
@@ -111,11 +111,31 @@ func TestGetProducts(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
+
+	var resp struct {
+		Data []billing.ProductWithEntitlement `json:"data"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if len(resp.Data) != 1 {
+		t.Fatalf("len(data) = %d, want 1", len(resp.Data))
+	}
+	if resp.Data[0].Name != "basic-pack" {
+		t.Errorf("name = %q, want %q", resp.Data[0].Name, "basic-pack")
+	}
+	if resp.Data[0].DisplayName != "基础包" {
+		t.Errorf("displayName = %q, want %q", resp.Data[0].DisplayName, "基础包")
+	}
+	if resp.Data[0].Price != 29.9 {
+		t.Errorf("price = %.2f, want 29.9", resp.Data[0].Price)
+	}
+	if resp.Data[0].Currency != "CNY" {
+		t.Errorf("currency = %q, want %q", resp.Data[0].Currency, "CNY")
+	}
 }
 
 func TestCreateOrder_ValidRequest(t *testing.T) {
 	ps := &mockPaymentService{
-		orderResult: &billing.PaymentResult{OrderID: "order-1"},
+		orderResult: &billing.PaymentResult{OrderID: "order-1", PaymentURL: "https://pay.test/1", Amount: 29.9, Currency: "CNY"},
 	}
 	h := setupPaymentHandler(ps, &mockEntitlementSvc{})
 
@@ -132,6 +152,28 @@ func TestCreateOrder_ValidRequest(t *testing.T) {
 
 	if w.Code != 200 {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Data struct {
+			OrderID     string  `json:"order_id"`
+			PaymentURL  string  `json:"payment_url"`
+			Amount      float64 `json:"amount"`
+			Currency    string  `json:"currency"`
+		} `json:"data"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Data.OrderID != "order-1" {
+		t.Errorf("order_id = %q, want %q", resp.Data.OrderID, "order-1")
+	}
+	if resp.Data.PaymentURL != "https://pay.test/1" {
+		t.Errorf("payment_url = %q, want pay URL", resp.Data.PaymentURL)
+	}
+	if resp.Data.Amount != 29.9 {
+		t.Errorf("amount = %.2f, want 29.9", resp.Data.Amount)
+	}
+	if resp.Data.Currency != "CNY" {
+		t.Errorf("currency = %q, want %q", resp.Data.Currency, "CNY")
 	}
 }
 
@@ -153,8 +195,10 @@ func TestCreateOrder_MissingFields(t *testing.T) {
 
 func TestGetOrders_DefaultPagination(t *testing.T) {
 	ps := &mockPaymentService{
-		orders:      []billing.OrderHistory{},
-		ordersTotal: 0,
+		orders: []billing.OrderHistory{
+			{OrderID: "order-1", Price: 10, Currency: "CNY", Status: "Created"},
+		},
+		ordersTotal: 1,
 	}
 	h := setupPaymentHandler(ps, &mockEntitlementSvc{})
 
@@ -166,6 +210,26 @@ func TestGetOrders_DefaultPagination(t *testing.T) {
 
 	if w.Code != 200 {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Data struct {
+			List  []billing.OrderHistory `json:"list"`
+			Total int64                  `json:"total"`
+		} `json:"data"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Data.Total != 1 {
+		t.Errorf("total = %d, want 1", resp.Data.Total)
+	}
+	if len(resp.Data.List) != 1 {
+		t.Fatalf("len(list) = %d, want 1", len(resp.Data.List))
+	}
+	if resp.Data.List[0].OrderID != "order-1" {
+		t.Errorf("order_id = %q, want %q", resp.Data.List[0].OrderID, "order-1")
+	}
+	if resp.Data.List[0].Price != 10 {
+		t.Errorf("price = %.2f, want 10", resp.Data.List[0].Price)
 	}
 }
 
@@ -305,11 +369,21 @@ func TestCancelOrder(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
+
+	var resp struct {
+		Data struct {
+			Message string `json:"message"`
+		} `json:"data"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Data.Message != "订单已取消" {
+		t.Errorf("message = %q, want %q", resp.Data.Message, "订单已取消")
+	}
 }
 
 func TestSyncOrder(t *testing.T) {
 	ps := &mockPaymentService{
-		syncResult: &billing.OrderSyncResult{Message: "synced"},
+		syncResult: &billing.OrderSyncResult{Message: "同步成功", OrderStatus: "Paid", QuotaSeconds: 3600},
 	}
 	h := setupPaymentHandler(ps, &mockEntitlementSvc{})
 
@@ -322,6 +396,20 @@ func TestSyncOrder(t *testing.T) {
 
 	if w.Code != 200 {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Data struct {
+			Message     string `json:"message"`
+			OrderStatus string `json:"order_status"`
+		} `json:"data"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Data.Message != "同步成功" {
+		t.Errorf("message = %q, want %q", resp.Data.Message, "同步成功")
+	}
+	if resp.Data.OrderStatus != "Paid" {
+		t.Errorf("order_status = %q, want %q", resp.Data.OrderStatus, "Paid")
 	}
 }
 
@@ -342,6 +430,29 @@ func TestGetBillingHistory(t *testing.T) {
 
 	if w.Code != 200 {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Data struct {
+			List  []billing.BillingHistoryEntry `json:"list"`
+			Total int64                         `json:"total"`
+		} `json:"data"`
+	}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Data.Total != 1 {
+		t.Errorf("total = %d, want 1", resp.Data.Total)
+	}
+	if len(resp.Data.List) != 1 {
+		t.Fatalf("len(list) = %d, want 1", len(resp.Data.List))
+	}
+	if resp.Data.List[0].ID != 1 {
+		t.Errorf("id = %d, want 1", resp.Data.List[0].ID)
+	}
+	if resp.Data.List[0].ActionType != "FREEZE" {
+		t.Errorf("action_type = %q, want %q", resp.Data.List[0].ActionType, "FREEZE")
+	}
+	if resp.Data.List[0].AmountSeconds != 120 {
+		t.Errorf("amount_seconds = %d, want 120", resp.Data.List[0].AmountSeconds)
 	}
 }
 

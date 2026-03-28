@@ -50,14 +50,14 @@ type UserInfo struct {
 }
 
 type authService struct {
-	casdoorClient  *casdoor.Client
+	casdoorClient  casdoor.ClientInterface
 	jwtConfig      *config.JWTConfig
 	privateKey     *rsa.PrivateKey
 	sessionService session.SessionService
 }
 
 // NewAuthService creates an authentication service.
-func NewAuthService(casdoorClient *casdoor.Client, jwtConfig *config.JWTConfig, sessionService session.SessionService) (AuthService, error) {
+func NewAuthService(casdoorClient casdoor.ClientInterface, jwtConfig *config.JWTConfig, sessionService session.SessionService) (AuthService, error) {
 	keyBytes, err := os.ReadFile(jwtConfig.PrivateKeyPath)
 	if err != nil {
 		return nil, fmt.Errorf("读取 JWT 私钥失败: %w", err)

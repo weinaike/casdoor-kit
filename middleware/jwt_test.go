@@ -214,3 +214,33 @@ func TestParseTokenFromQueryString(t *testing.T) {
 		t.Errorf("userID = %q, want %q", userID, "user-sse")
 	}
 }
+
+func BenchmarkJWTAuth_ValidToken(b *testing.B) {
+	handler := JWTAuth(testPubFile)
+	token := signTestJWT(jwt.MapClaims{
+		"user_id": "user-bench",
+		"exp":     time.Now().Add(time.Hour).Unix(),
+	})
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = req
+		handler(c)
+	}
+}
+
+func BenchmarkParseTokenFromQueryString(b *testing.B) {
+	token := signTestJWT(jwt.MapClaims{
+		"user_id": "user-bench",
+		"exp":     time.Now().Add(time.Hour).Unix(),
+	})
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		ParseTokenFromQueryString(token)
+	}
+}

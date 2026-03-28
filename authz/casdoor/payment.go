@@ -268,6 +268,10 @@ func (c *Client) GetOrder(ctx context.Context, accessToken string, orderName str
 		return nil, fmt.Errorf("获取订单失败: %s", response.Msg)
 	}
 
+	if response.Data.Name == "" {
+		return nil, fmt.Errorf("订单不存在")
+	}
+
 	return &response.Data, nil
 }
 
