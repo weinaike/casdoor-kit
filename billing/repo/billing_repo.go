@@ -441,7 +441,7 @@ func (r *billingRepo) Freeze(ctx context.Context, userID string, taskRef string,
 			ActionType:    model.BillingActionFreeze,
 			AmountSeconds: requiredSeconds,
 			BalanceAfter:  wallet.TotalAvailable - wallet.TotalFrozen,
-			Description:   fmt.Sprintf("任务冻结: %s", taskRef),
+			Description:   fmt.Sprintf("任务冻结 (#%s)", shortRef(taskRef)),
 		}
 		if err := tx.Create(transaction).Error; err != nil {
 			return fmt.Errorf("创建计费流水失败: %w", err)
@@ -514,7 +514,7 @@ func (r *billingRepo) Consume(ctx context.Context, taskRef string) error {
 			ActionType:    model.BillingActionConsume,
 			AmountSeconds: taskBilling.BilledSeconds,
 			BalanceAfter:  wallet.TotalAvailable - wallet.TotalFrozen,
-			Description:   fmt.Sprintf("任务消费: %s", taskRef),
+			Description:   fmt.Sprintf("翻译消费 (#%s)", shortRef(taskRef)),
 		}
 		if err := tx.Create(transaction).Error; err != nil {
 			return fmt.Errorf("创建计费流水失败: %w", err)
@@ -579,7 +579,7 @@ func (r *billingRepo) Unfreeze(ctx context.Context, taskRef string) error {
 			ActionType:    model.BillingActionUnfreeze,
 			AmountSeconds: taskBilling.BilledSeconds,
 			BalanceAfter:  wallet.TotalAvailable - wallet.TotalFrozen,
-			Description:   fmt.Sprintf("任务失败解冻: %s", taskRef),
+			Description:   fmt.Sprintf("任务失败解冻 (#%s)", shortRef(taskRef)),
 		}
 		if err := tx.Create(transaction).Error; err != nil {
 			return fmt.Errorf("创建计费流水失败: %w", err)
@@ -668,7 +668,7 @@ func (r *billingRepo) GrantEntitlement(ctx context.Context, userID string, mappi
 			ActionType:    model.BillingActionGrant,
 			AmountSeconds: mapping.QuotaSeconds,
 			BalanceAfter:  wallet.TotalAvailable - wallet.TotalFrozen,
-			Description:   fmt.Sprintf("购买产品: %s", mapping.CasdoorProductName),
+			Description:   grantDescription(mapping),
 		}
 		if err := tx.Create(transaction).Error; err != nil {
 			return fmt.Errorf("创建计费流水失败: %w", err)
@@ -865,4 +865,20 @@ func (r *billingRepo) CanUserPurchaseProduct(ctx context.Context, userID string,
 	}
 
 	return count < int64(mapping.MaxPerUser), nil
+}
+
+// shortRef returns the first 8 characters of a reference for display.
+func shortRef(ref string) string {
+	if len(ref) > 8 {
+		return ref[:8]
+	}
+	return ref
+}
+
+// grantDescription returns a user-friendly description for a grant action.
+func grantDescription(mapping *model.ProductEntitlementMapping) string {
+	if mapping.Description != "" {
+		return mapping.Description
+	}
+	return fmt.Sprintf("充值时长: %s", mapping.CasdoorProductName)
 }
