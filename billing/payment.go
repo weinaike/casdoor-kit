@@ -147,6 +147,18 @@ func (s *paymentService) GetProducts(ctx context.Context, userID string) ([]Prod
 			if mapping.Description != "" {
 				product.Description = mapping.Description
 			}
+
+			// Check if user can still purchase this product (based on max_per_user)
+			if mapping.MaxPerUser > 0 {
+				canPurchase, err := s.entitlementRepo.CanUserPurchaseProduct(ctx, userID, p.Name)
+				if err != nil {
+					gokit.GetLogger().Warn("检查购买权限失败", "error", err, "product", p.Name)
+				}
+				if !canPurchase {
+					// Skip this product if user has reached max_per_user limit
+					continue
+				}
+			}
 		}
 
 		products = append(products, product)

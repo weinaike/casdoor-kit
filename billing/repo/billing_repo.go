@@ -43,6 +43,14 @@ type BillingRepository interface {
 	Consume(ctx context.Context, taskRef string) error
 	Unfreeze(ctx context.Context, taskRef string) error
 	GrantEntitlement(ctx context.Context, userID string, mapping *model.ProductEntitlementMapping, orderID int64) (*model.UserEntitlement, error)
+	// CanUserPurchaseProduct checks if a user can still purchase a product based on max_per_user
+	CanUserPurchaseProduct(ctx context.Context, userID string, productName string) (bool, error)
+	// ExpireEntitlements processes expired entitlements in batches and adjusts wallet balances
+	ExpireEntitlements(ctx context.Context, batchSize int) (expired int64, err error)
+	// ReconcileWallet recalculates wallet balance from active entitlements
+	ReconcileWallet(ctx context.Context, userID string) (before, after int64, err error)
+	// ListUsersWithWalletDiscrepancy finds users whose wallet doesn't match entitlements
+	ListUsersWithWalletDiscrepancy(ctx context.Context, limit int) ([]string, error)
 }
 
 type billingRepo struct {
@@ -128,7 +136,10 @@ func (r *billingRepo) GetActiveEntitlementsByUserID(ctx context.Context, userID 
 	var entitlements []model.UserEntitlement
 	query := `
 		SELECT * FROM user_entitlement
-		WHERE user_id = ? AND status = 'ACTIVE' AND (total_seconds - used_seconds - frozen_seconds) > 0
+		WHERE user_id = ?
+			AND status = 'ACTIVE'
+			AND (valid_until IS NULL OR valid_until > NOW())
+			AND (total_seconds - used_seconds - frozen_seconds) > 0
 		ORDER BY
 			CASE WHEN valid_until IS NULL THEN 1 ELSE 0 END,
 			valid_until ASC,
@@ -357,7 +368,10 @@ func (r *billingRepo) Freeze(ctx context.Context, userID string, taskRef string,
 		var entitlements []model.UserEntitlement
 		query := `
 			SELECT * FROM user_entitlement
-			WHERE user_id = ? AND status = 'ACTIVE' AND (total_seconds - used_seconds - frozen_seconds) > 0
+			WHERE user_id = ?
+				AND status = 'ACTIVE'
+				AND (valid_until IS NULL OR valid_until > NOW())
+				AND (total_seconds - used_seconds - frozen_seconds) > 0
 			ORDER BY
 				CASE WHEN valid_until IS NULL THEN 1 ELSE 0 END,
 				valid_until ASC,
@@ -580,12 +594,18 @@ func (r *billingRepo) GrantEntitlement(ctx context.Context, userID string, mappi
 	var entitlement *model.UserEntitlement
 
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Check max_per_user limit
+		// Check max_per_user limit - count ALL historical purchases
+		// This includes expired, exhausted, and deleted entitlements
 		if mapping.MaxPerUser > 0 {
 			var count int64
-			if err := tx.Model(&model.UserEntitlement{}).
-				Where("user_id = ? AND casdoor_product_name = ?", userID, mapping.CasdoorProductName).
-				Count(&count).Error; err != nil {
+			// Count from orders instead, as it records all purchase history
+			query := `
+				SELECT COUNT(*) FROM user_order
+				WHERE user_id = ?
+					AND casdoor_product_name = ?
+					AND status = ?
+			`
+			if err := tx.Raw(query, userID, mapping.CasdoorProductName, model.OrderStatusPaid).Scan(&count).Error; err != nil {
 				return fmt.Errorf("检查购买次数失败: %w", err)
 			}
 			if count >= int64(mapping.MaxPerUser) {
@@ -661,4 +681,188 @@ func (r *billingRepo) GrantEntitlement(ctx context.Context, userID string, mappi
 		return nil, err
 	}
 	return entitlement, nil
+}
+
+// ExpireEntitlements processes expired entitlements in batches and adjusts wallet balances.
+func (r *billingRepo) ExpireEntitlements(ctx context.Context, batchSize int) (expired int64, err error) {
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Find entitlements that are ACTIVE but past valid_until
+		var entitlements []model.UserEntitlement
+		query := `
+			SELECT * FROM user_entitlement
+			WHERE status = 'ACTIVE'
+				AND valid_until IS NOT NULL
+				AND valid_until <= NOW()
+			ORDER BY valid_until ASC
+			LIMIT ?
+		`
+		if err := tx.Raw(query, batchSize).Scan(&entitlements).Error; err != nil {
+			return fmt.Errorf("查询过期权益包失败: %w", err)
+		}
+
+		for _, e := range entitlements {
+			// Calculate remaining available seconds
+			remaining := e.AvailableSeconds()
+			if remaining < 0 {
+				remaining = 0
+			}
+
+			// Update entitlement status
+			e.Status = model.EntitlementStatusExpired
+			if err := tx.Save(&e).Error; err != nil {
+				return fmt.Errorf("更新权益包状态失败: %w", err)
+			}
+
+			// Deduct from wallet
+			if remaining > 0 {
+				var wallet model.UserWallet
+				if err := tx.Where("user_id = ?", e.UserID).First(&wallet).Error; err != nil {
+					if errors.Is(err, gorm.ErrRecordNotFound) {
+						continue // No wallet to update
+					}
+					return fmt.Errorf("获取钱包失败: %w", err)
+				}
+
+				wallet.TotalAvailable -= remaining
+				if wallet.TotalAvailable < 0 {
+					wallet.TotalAvailable = 0
+				}
+
+				if err := tx.Model(&model.UserWallet{}).
+					Where("id = ? AND version = ?", wallet.ID, wallet.Version).
+					Updates(map[string]interface{}{
+						"total_available": wallet.TotalAvailable,
+						"version":         wallet.Version + 1,
+					}).Error; err != nil {
+					return fmt.Errorf("更新钱包失败: %w", err)
+				}
+
+				// Record expiration transaction
+				transaction := &model.BillingTransactionLog{
+					UserID:        e.UserID,
+					EntitlementID: &e.ID,
+					ActionType:    model.BillingActionExpire,
+					AmountSeconds: -remaining,
+					BalanceAfter:  wallet.TotalAvailable - wallet.TotalFrozen,
+					Description:   fmt.Sprintf("权益包过期: %s (剩余%d秒)", e.CasdoorProductName, remaining),
+				}
+				if err := tx.Create(transaction).Error; err != nil {
+					return fmt.Errorf("创建计费流水失败: %w", err)
+				}
+			}
+
+			expired++
+		}
+
+		return nil
+	})
+
+	return expired, err
+}
+
+// ReconcileWallet recalculates wallet balance from active entitlements.
+func (r *billingRepo) ReconcileWallet(ctx context.Context, userID string) (before, after int64, err error) {
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var wallet model.UserWallet
+		if err := tx.Where("user_id = ?", userID).First(&wallet).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				wallet = model.UserWallet{UserID: userID, Version: 1}
+				if err := tx.Create(&wallet).Error; err != nil {
+					return fmt.Errorf("创建钱包失败: %w", err)
+				}
+			} else {
+				return fmt.Errorf("获取钱包失败: %w", err)
+			}
+		}
+
+		before = wallet.TotalAvailable
+
+		// Calculate correct balance from all active entitlements
+		var calculatedBalance int64
+		query := `
+			SELECT COALESCE(SUM(total_seconds - used_seconds - frozen_seconds), 0)
+			FROM user_entitlement
+			WHERE user_id = ?
+				AND status = 'ACTIVE'
+				AND (valid_until IS NULL OR valid_until > NOW())
+		`
+		if err := tx.Raw(query, userID).Scan(&calculatedBalance).Error; err != nil {
+			return fmt.Errorf("计算权益包余额失败: %w", err)
+		}
+
+		after = calculatedBalance
+
+		// Update wallet if different
+		if wallet.TotalAvailable != calculatedBalance {
+			wallet.TotalAvailable = calculatedBalance
+			if err := tx.Model(&model.UserWallet{}).
+				Where("id = ? AND version = ?", wallet.ID, wallet.Version).
+				Updates(map[string]interface{}{
+					"total_available": wallet.TotalAvailable,
+					"version":         wallet.Version + 1,
+				}).Error; err != nil {
+				return fmt.Errorf("更新钱包失败: %w", err)
+			}
+		}
+
+		return nil
+	})
+
+	return before, after, err
+}
+
+// ListUsersWithWalletDiscrepancy finds users with mismatched wallets.
+func (r *billingRepo) ListUsersWithWalletDiscrepancy(ctx context.Context, limit int) ([]string, error) {
+	query := `
+		SELECT DISTINCT w.user_id
+		FROM user_wallet w
+		LEFT JOIN (
+			SELECT user_id,
+				   SUM(total_seconds - used_seconds - frozen_seconds) as calculated
+			FROM user_entitlement
+			WHERE status = 'ACTIVE'
+				AND (valid_until IS NULL OR valid_until > NOW())
+			GROUP BY user_id
+		) e ON w.user_id = e.user_id
+		WHERE w.total_available != COALESCE(e.calculated, 0)
+		LIMIT ?
+	`
+
+	var userIDs []string
+	if err := r.db.WithContext(ctx).Raw(query, limit).Scan(&userIDs).Error; err != nil {
+		return nil, fmt.Errorf("查询钱包不一致用户失败: %w", err)
+	}
+
+	return userIDs, nil
+}
+
+// CanUserPurchaseProduct checks if a user can still purchase a product based on max_per_user limit.
+func (r *billingRepo) CanUserPurchaseProduct(ctx context.Context, userID string, productName string) (bool, error) {
+	// Get the product mapping to check max_per_user
+	mapping, err := r.GetProductMappingByProductName(ctx, productName)
+	if err != nil {
+		return false, fmt.Errorf("获取产品映射失败: %w", err)
+	}
+	if mapping == nil {
+		return false, fmt.Errorf("产品映射不存在: %s", productName)
+	}
+
+	// If no max_per_user limit, user can always purchase
+	if mapping.MaxPerUser <= 0 {
+		return true, nil
+	}
+
+	// Count all successful purchases for this user and product
+	var count int64
+	query := `
+		SELECT COUNT(*) FROM user_order
+		WHERE user_id = ?
+			AND casdoor_product_name = ?
+			AND status = ?
+	`
+	if err := r.db.WithContext(ctx).Raw(query, userID, productName, model.OrderStatusPaid).Scan(&count).Error; err != nil {
+		return false, fmt.Errorf("查询购买次数失败: %w", err)
+	}
+
+	return count < int64(mapping.MaxPerUser), nil
 }
