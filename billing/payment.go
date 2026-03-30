@@ -43,6 +43,8 @@ type ProductWithEntitlement struct {
 	QuotaSeconds    int64    `json:"quota_seconds"`
 	EntitlementType string   `json:"entitlement_type"`
 	PeriodMonths    int      `json:"period_months"`
+	PeriodDays      int      `json:"period_days"`
+	MaxPerUser      int      `json:"max_per_user"`
 	State           string   `json:"state"`
 }
 
@@ -139,6 +141,8 @@ func (s *paymentService) GetProducts(ctx context.Context, userID string) ([]Prod
 			product.QuotaSeconds = mapping.QuotaSeconds
 			product.EntitlementType = string(mapping.EntitlementType)
 			product.PeriodMonths = mapping.PeriodMonths
+			product.PeriodDays = mapping.PeriodDays
+			product.MaxPerUser = mapping.MaxPerUser
 		}
 
 		products = append(products, product)
