@@ -143,6 +143,10 @@ func (s *paymentService) GetProducts(ctx context.Context, userID string) ([]Prod
 			product.PeriodMonths = mapping.PeriodMonths
 			product.PeriodDays = mapping.PeriodDays
 			product.MaxPerUser = mapping.MaxPerUser
+			// 本地配置的 description 优先级更高
+			if mapping.Description != "" {
+				product.Description = mapping.Description
+			}
 		}
 
 		products = append(products, product)
