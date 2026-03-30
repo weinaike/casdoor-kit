@@ -136,6 +136,7 @@ func (r *billingRepo) GetActiveEntitlementsByUserID(ctx context.Context, userID 
 				WHEN 'GIFT' THEN 1
 				WHEN 'SUBSCRIPTION' THEN 2
 				WHEN 'TOP_UP' THEN 3
+				WHEN 'TRIAL' THEN 4
 			END
 	`
 	if err := r.db.WithContext(ctx).Raw(query, userID).Scan(&entitlements).Error; err != nil {
@@ -364,6 +365,7 @@ func (r *billingRepo) Freeze(ctx context.Context, userID string, taskRef string,
 					WHEN 'GIFT' THEN 1
 					WHEN 'SUBSCRIPTION' THEN 2
 					WHEN 'TOP_UP' THEN 3
+					WHEN 'TRIAL' THEN 4
 				END
 		`
 		if err := tx.Raw(query, userID).Scan(&entitlements).Error; err != nil {
@@ -578,6 +580,19 @@ func (r *billingRepo) GrantEntitlement(ctx context.Context, userID string, mappi
 	var entitlement *model.UserEntitlement
 
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Check max_per_user limit
+		if mapping.MaxPerUser > 0 {
+			var count int64
+			if err := tx.Model(&model.UserEntitlement{}).
+				Where("user_id = ? AND casdoor_product_name = ?", userID, mapping.CasdoorProductName).
+				Count(&count).Error; err != nil {
+				return fmt.Errorf("检查购买次数失败: %w", err)
+			}
+			if count >= int64(mapping.MaxPerUser) {
+				return errors.New("已达到该产品的最大购买次数限制")
+			}
+		}
+
 		var wallet model.UserWallet
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("user_id = ?", userID).
@@ -594,7 +609,11 @@ func (r *billingRepo) GrantEntitlement(ctx context.Context, userID string, mappi
 
 		now := time.Now()
 		var validUntil *time.Time
-		if mapping.PeriodMonths > 0 {
+		// Support both PeriodMonths and PeriodDays
+		if mapping.PeriodDays > 0 {
+			expiry := now.AddDate(0, 0, mapping.PeriodDays)
+			validUntil = &expiry
+		} else if mapping.PeriodMonths > 0 {
 			expiry := now.AddDate(0, mapping.PeriodMonths, 0)
 			validUntil = &expiry
 		}

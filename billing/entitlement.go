@@ -181,12 +181,16 @@ func (s *entitlementService) GrantEntitlement(ctx context.Context, userID string
 				entitlementType = model.EntitlementTypeSubscription
 			} else if cfgMapping.EntitlementType == "GIFT" {
 				entitlementType = model.EntitlementTypeGift
+			} else if cfgMapping.EntitlementType == "TRIAL" {
+				entitlementType = model.EntitlementTypeTrial
 			}
 			mapping = &model.ProductEntitlementMapping{
 				CasdoorProductName: productName,
 				QuotaSeconds:       cfgMapping.QuotaSeconds,
 				EntitlementType:    entitlementType,
 				PeriodMonths:       cfgMapping.PeriodMonths,
+				PeriodDays:         cfgMapping.PeriodDays,
+				MaxPerUser:         cfgMapping.MaxPerUser,
 				Description:        cfgMapping.Description,
 				IsActive:           true,
 			}

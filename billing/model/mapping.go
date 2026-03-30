@@ -10,6 +10,8 @@ type ProductEntitlementMapping struct {
 	QuotaSeconds       int64           `gorm:"not null" json:"quota_seconds"`
 	EntitlementType    EntitlementType `gorm:"type:varchar(20);not null" json:"entitlement_type"`
 	PeriodMonths       int             `gorm:"default:0" json:"period_months"`
+	PeriodDays         int             `gorm:"default:0" json:"period_days"`        // Alternative to PeriodMonths for shorter trials
+	MaxPerUser         int             `gorm:"default:0" json:"max_per_user"`        // Max purchases per user (0 = unlimited)
 	Description        string          `gorm:"type:text" json:"description"`
 	IsActive           bool            `gorm:"not null;default:true" json:"is_active"`
 	CreatedAt          time.Time       `gorm:"autoCreateTime" json:"created_at"`

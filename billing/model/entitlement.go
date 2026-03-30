@@ -9,6 +9,7 @@ const (
 	EntitlementTypeSubscription EntitlementType = "SUBSCRIPTION" // recurring subscription
 	EntitlementTypeTopUp        EntitlementType = "TOP_UP"       // one-time top-up (permanent)
 	EntitlementTypeGift         EntitlementType = "GIFT"         // gifted credits
+	EntitlementTypeTrial        EntitlementType = "TRIAL"        // trial period (limited time, lowest priority)
 )
 
 // EntitlementStatus represents the status of an entitlement.
